@@ -842,7 +842,6 @@ class RAGFlowPdfParser:
         #     print(f"box_i: {box_i}, box: {box}", end="\n\n")
         # print()
         
-        
         tables = {}
         figures = {}
         # extract figure and table boxes
@@ -1031,6 +1030,7 @@ class RAGFlowPdfParser:
             poss = []
             cropped_img = cropout(bxs, "figure", poss)
             
+            
             print("================= vlm_model =================")
             print(vlm_model)
             start_time = time.time()
@@ -1061,6 +1061,7 @@ class RAGFlowPdfParser:
             print(f"vlm duration: {time.time() - start_time}")
             print(vlm_output['choices'][0]['message']['content'], end="\n\n")
             txt += "\n" + vlm_output['choices'][0]['message']['content']
+            
             
             res.append(
                 (cropped_img,
