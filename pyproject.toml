@@ -114,6 +114,9 @@ graspologic = "^3.4.1"
 pymysql = "^1.1.1"
 mini-racer = "^0.12.4"
 pyicu = "^2.13.1"
+termcolor = "^2.5.0"
+pymupdf = "^1.24.13"
+pycocotools = "^2.0.8"
 
 
 [tool.poetry.group.full]

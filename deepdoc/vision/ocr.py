@@ -559,6 +559,8 @@ class OCR(object):
 
         start = time.time()
         dt_boxes, elapse = self.text_detector(img)
+        # print(f"detect dt_boxes: {dt_boxes}, detect elapse: {elapse}",end='\n\n')
+        
         time_dict['det'] = elapse
 
         if dt_boxes is None:
@@ -577,6 +579,7 @@ class OCR(object):
         if score < self.drop_score:
             return ""
         return text
+
 
     def __call__(self, img, cls=True):
         time_dict = {'det': 0, 'rec': 0, 'cls': 0, 'all': 0}
