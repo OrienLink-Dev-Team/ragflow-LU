@@ -82,10 +82,17 @@ class RAGFlowPdfParser:
         self.table_model = AtomModelSingleton().get_atom_model(
             atom_model_name=AtomicModel.Table,
             table_model_type="TableMaster",
-            table_model_path=table4_path,
+            table_model_path=table3_path,
             table_max_time=400,
             device="cuda"
         )
+
+        from xinference.client import Client     
+        self.vlm_client = Client("https://065f-2409-8a00-263f-a800-3eec-efff-feaf-be1a.ngrok-free.app")
+        
+        self.vlm_model_name = [name for name, val in self.vlm_client.list_models().items() if "qwen2-vl-instruct" in name]
+        self.vlm_model = self.vlm_client.get_model(self.vlm_model_name[0])
+        self.vlm_prompt = "描述这幅图，里面的文字和字符都需要按照原文输出，但是需要加上理解和关系描述。中文回答我。"    
 
         """
         If you have trouble downloading HuggingFace models, -_^ this might help!!
@@ -213,7 +220,7 @@ class RAGFlowPdfParser:
         # for box_i, box in enumerate(self.boxes):
         #     print(f"box_i: {box_i}, box: {box}")
         # print()
-        
+        return
         imgs, pos = [], []
         tbcnt = [0]
         MARGIN = 10
@@ -352,9 +359,7 @@ class RAGFlowPdfParser:
                 b["SP"] = ii
         
         print(f"================= _table_transformer_job result, {len(self.boxes)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
+
 
 
     def __ocr(self, pagenum, img, chars, ZM=3):
@@ -367,10 +372,7 @@ class RAGFlowPdfParser:
         # json_filename = f"{output_dir}/cropped_image.json"
         
         
-        
         bxs = self.ocr.detect(np.array(img))
-        # print(colored(f"ocr.detect output: {len(list(bxs))}",'green'))
-        # print(bxs, end='\n\n')
         
         if not bxs:
             self.boxes.append([])
@@ -384,13 +386,6 @@ class RAGFlowPdfParser:
             self.mean_height[-1] / 3
         )
         
-        # print(colored(f"sort_Y_firstly output: {len(bxs)}",'green'))
-        # print(bxs, end='\n\n')
-        
-        # print(colored(f"chars: {len(chars)}",'green'))
-        # for char_i, char_dict in enumerate(chars):
-        #     print(f"{char_i}:{char_dict['text']}")
-        # print()
         
         # merge chars in the same rect
         for c in Recognizer.sort_Y_firstly(
@@ -460,9 +455,6 @@ class RAGFlowPdfParser:
         
         
         print(f"================= ocr final output, {len(bxs)} =================")
-        # for box_i, box in enumerate(bxs):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
         
         
         if self.mean_height[-1] == 0:
@@ -473,16 +465,13 @@ class RAGFlowPdfParser:
     def _layouts_rec(self, ZM, drop=True):
         assert len(self.page_images) == len(self.boxes)
         self.boxes, self.page_layout = self.layouter(
-            self.page_images, self.boxes, ZM, drop=drop)
+            self.page_images, self.boxes, ZM, thr=0.5, drop=drop)
         
         print(f"================= _layouts_rec result, {len(self.page_layout)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
         
-        for page_i, layout in enumerate(self.page_layout):
-            print(f"page_i: {page_i}, layout: {layout}")
-        print()
+        # for page_i, layout in enumerate(self.page_layout):
+        #     print(f"page_i: {page_i}, layout: {layout}")
+        # print()
             
         # cumlative Y
         for i in range(len(self.boxes)):
@@ -493,9 +482,7 @@ class RAGFlowPdfParser:
 
     def _text_merge(self):
         print(f"================= _text_merge begin, {len(self.boxes)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
+        
 
         # merge adjusted boxes
         bxs = self.boxes
@@ -524,15 +511,11 @@ class RAGFlowPdfParser:
         self.boxes = bxs
         
         print(f"================= _text_merge result, {len(self.boxes)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
+    
 
     def _naive_vertical_merge(self):
         print(f"================= _naive_vertical_merge begin, {len(self.boxes)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
+        
         
         bxs = Recognizer.sort_Y_firstly(
             self.boxes, np.median(
@@ -585,15 +568,10 @@ class RAGFlowPdfParser:
         self.boxes = bxs
         
         print(f"================= _naive_vertical_merge result, {len(self.boxes)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
+        
 
     def _concat_downward(self, concat_between_pages=True):
         print(f"================= _concat_downward begin, {len(self.boxes)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
         
         # count boxes in the same row as a feature
         for i in range(len(self.boxes)):
@@ -733,17 +711,11 @@ class RAGFlowPdfParser:
 
         #     img_filepath = os.path.join(output_text_dir, f"page_{page_num + self.page_from}_text_annotated.jpg")
         #     img_copy.save(img_filepath)
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        print()
         
 
     def _filter_forpages(self):
         print(f"================= _filter_forpages begin, {len(self.boxes)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
-        
+
         if not self.boxes:
             return
         findit = False
@@ -795,17 +767,12 @@ class RAGFlowPdfParser:
             i += 1
         
         print(f"================= _filter_forpages result, {len(self.boxes)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
+ 
 
 
     def _merge_with_same_bullet(self):
         print(f"================= _merge_with_same_bullet begin, {len(self.boxes)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
-        
+
         i = 0
         while i + 1 < len(self.boxes):
             b = self.boxes[i]
@@ -830,18 +797,12 @@ class RAGFlowPdfParser:
             self.boxes.pop(i)
         
         print(f"================= _merge_with_same_bullet result, {len(self.boxes)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}")
-        # print()
 
     def _extract_table_figure(self, need_image, ZM,
                               return_html, need_position):
         
         print(f"================= _extract_table_figure begin, {len(self.boxes)} =================")
-        # for box_i, box in enumerate(self.boxes):
-        #     print(f"box_i: {box_i}, box: {box}", end="\n\n")
-        # print()
-        
+
         tables = {}
         figures = {}
         # extract figure and table boxes
@@ -854,10 +815,14 @@ class RAGFlowPdfParser:
                 continue
             lout_no = str(self.boxes[i]["page_number"]) + \
                       "-" + str(self.boxes[i]["layoutno"])
-            if TableStructureRecognizer.is_caption(self.boxes[i]) or self.boxes[i]["layout_type"] in ["table caption",
-                                                                                                      "title",
-                                                                                                      "figure caption",
-                                                                                                      "reference"]:
+            
+            # if TableStructureRecognizer.is_caption(self.boxes[i]):
+            #     print(f'table structure recognizer: self.boxes[i]: {self.boxes[i]}')
+
+            if self.boxes[i]["layout_type"] in ["table caption",
+                                                "title",
+                                                "figure caption",
+                                                "reference"]:
                 nomerge_lout_no.append(lst_lout_no)
             if self.boxes[i]["layout_type"] == "table":
                 if re.match(r"(数据|资料|图表)*来源[:： ]", self.boxes[i]["text"]):
@@ -914,12 +879,11 @@ class RAGFlowPdfParser:
             if not TableStructureRecognizer.is_caption(c):
                 i += 1
                 continue
-
-            # find the nearest layouts
             def nearest(tbls):
                 nonlocal c
                 mink = ""
                 minv = 1000000000
+
                 for k, bxs in tbls.items():
                     for b in bxs:
                         if b.get("layout_type", "").find("caption") >= 0:
@@ -928,6 +892,7 @@ class RAGFlowPdfParser:
                         x_dis = self._x_dis(
                             c, b) if not x_overlapped(
                             c, b) else 0
+
                         dis = y_dis * y_dis + x_dis * x_dis
                         if dis < minv:
                             mink = k
@@ -936,17 +901,15 @@ class RAGFlowPdfParser:
 
             tk, tv = nearest(tables)
             fk, fv = nearest(figures)
-            # if min(tv, fv) > 2000:
-            #    i += 1
-            #    continue
-            if tv < fv and tk:
+
+            if tv < fv and tk and c.get("layout_type", "") == "table caption":
                 tables[tk].insert(0, c)
                 logging.debug(
                     "TABLE:" +
                     self.boxes[i]["text"] +
                     "; Cap: " +
                     tk)
-            elif fk:
+            elif fk and c.get("layout_type", "") == "figure caption":
                 figures[fk].insert(0, c)
                 logging.debug(
                     "FIGURE:" +
@@ -1010,42 +973,34 @@ class RAGFlowPdfParser:
         # output_image_dir = f"{output_dir}/{pdf_name}/image_result"
         # os.makedirs(output_image_dir, exist_ok=True)
         
-        print("================= xinference VLM =================")
-        from xinference.client import Client     
-        client = Client("https://065f-2409-8a00-263f-a800-3eec-efff-feaf-be1a.ngrok-free.app")
-        print(client.list_models())
-        vlm_model = client.get_model("qwen2-vl-instruct")
+        print("================= xinference VLM =================") 
+
+        print(self.vlm_client.list_models())
+        
         
         # count = 0
         print(f"================= figure caption=================")
         for k, bxs in figures.items():
             if not bxs:
                 continue
-            # txt = "\n".join([b["text"] for b in bxs])
-            # if not txt:
-            #     continue
             txt = bxs[0]["text"]
-            print(f"k: {k}, txt: {txt}")
-            
             poss = []
             cropped_img = cropout(bxs, "figure", poss)
             
-            
             print("================= vlm_model =================")
-            print(vlm_model)
+            print(self.vlm_model)
             start_time = time.time()
             cropped_img_copy = cropped_img.copy()
             buffered = BytesIO()
             cropped_img_copy.save(buffered, format="JPEG")
             buffered.seek(0)
             b64_img = base64.b64encode(buffered.read()).decode('utf-8')
-            prompt = "描述这幅图，里面的文字和字符都需要按照原文输出，但是需要加上理解和关系描述。中文回答我。"
-            vlm_output = vlm_model.chat(
+            vlm_output = self.vlm_model.chat(
                 messages=[
                     {
                         "role": "user",
                         "content": [
-                        {"type": "text", "text": prompt},
+                        {"type": "text", "text": self.vlm_prompt},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -1090,13 +1045,12 @@ class RAGFlowPdfParser:
                 [(b["bottom"] - b["top"]) / 2 for b in bxs]))
             poss = []
             images = cropout(bxs, "table", poss)
-            #res.append((images,
-                #self.tbl_det.construct_table(bxs, html=return_html, is_english=self.is_english)))
             table_captions = [b['text'] for b in bxs if b['layout_type'] == 'table caption']
-            print('table_captions = ', table_captions)
             html_res = self.table_model.img2html(images)
             if table_captions:
-                html_res = re.sub(r'(<table>)', r'\1<caption>{}</caption>'.format(table_captions[0]), html_res)
+                html_res = re.sub(r'(<table>)', r'\1<caption>{}</caption>'.format(''.join(table_captions)), html_res)
+            # 替换html_res中的单元格内容
+            html_res = re.sub(r'(<td>(二|一)</td>)', r'<td>-</td>', html_res)
             res.append((images,[html_res]))
             positions.append(poss)
             
@@ -1111,11 +1065,10 @@ class RAGFlowPdfParser:
             #     f.write("\n")
 
         print(f"================= _extract_table_figure result, {len(res)} =================")
-        # for res_i, res in enumerate(res):
-        #     print(f"res_i: {res_i}, res: {res}")
-        # print()
-        
         assert len(positions) == len(res)
+
+        import gc
+        gc.collect()
 
         if need_position:
             return list(zip(res, positions))

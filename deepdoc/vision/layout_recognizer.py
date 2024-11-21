@@ -93,8 +93,8 @@ class LayoutRecognizer():
             print(f"Page {page_index} detected {time.time() - start_time:.2f} seconds")
             assert isinstance(layout_dets, list), "Output should be a list"
             
-            # page_img = copy.deepcopy(img)
-            # draw = ImageDraw.Draw(page_img)
+            page_img = copy.deepcopy(img)
+            draw = ImageDraw.Draw(page_img)
             
             filtered_layout_dets = []
             for det in layout_dets:
@@ -113,21 +113,27 @@ class LayoutRecognizer():
                     det['bbox'] = bbox
                     del det['poly']
                     filtered_layout_dets.append(det)
+
+                    # Draw bounding box
+                    draw.rectangle(bbox, width=4,outline=colors[det['type']])
+                    
+                    text_position = (bbox[0], bbox[1] - 10)  # Adjust position as needed
+                    draw.text(text_position, det['type'], fill=colors[det['type']])
+                
                 else:
                     print("==================== det['category_id'] not in label_map ==================== ")
                     print(f"page_index: {page_index}, det: {det}")
-            #         # Draw bounding box
-            #         draw.rectangle(bbox, width=4,outline=colors[det['type']])
-                    
-            #         text_position = (bbox[0], bbox[1] - 10)  # Adjust position as needed
-            #         draw.text(text_position, det['type'], fill=colors[det['type']])
-            
-            # # Save the image with detections
-            # output_dir = "/mnt/mydisk/zhanzhao.liang/AImodel/ragflow/mineru/output/test"
-            # output_path = f"{output_dir}/output_page_{len(os.listdir(output_dir))}.png"
-            # page_img.save(output_path)
-            # print(f"Page {page_index} Layout Detections:", layout_dets)
-            # print(f"Page {page_index} processed in {time.time() - start_time:.2f} seconds")
+
+
+                
+            # Save the image with detections
+            output_dir = "/mnt/mydisk/wenke.deng/ragflow-LU/mineru/output/test"
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+            output_path = f"{output_dir}/output_page_{len(os.listdir(output_dir))}.png"
+            page_img.save(output_path)
+            print(f"Page {page_index} Layout Detections:", layout_dets)
+            print(f"Page {page_index} processed in {time.time() - start_time:.2f} seconds")
             
             layouts.append(filtered_layout_dets)
         return layouts
@@ -147,7 +153,7 @@ class LayoutRecognizer():
         # layouts = self.layout_model(image_list, thr, batch_size)
         layouts = []
         layouts_list = self.layout_inference(image_list)
-        # print(f"================= layouts recognizer result =================")
+        #print(f"================= layouts recognizer result =================")
         for p_i, p_layout in enumerate(layouts_list):
             layouts.append([layout for layout in p_layout if layout["score"] >= thr])
             # print(type(p_layout))
@@ -161,9 +167,10 @@ class LayoutRecognizer():
         garbages = {}
         page_layout = []
         print(f"================= layouts  =================")
+        
         for pn, lts in enumerate(layouts):
             bxs = ocr_res[pn]
-            print(f"pn: {pn}, lts: {lts}")
+            
             lts = [{"type": b["type"],
                     "score": float(b["score"]),
                     "x0": b["bbox"][0] / scale_factor, "x1": b["bbox"][2] / scale_factor,
@@ -173,21 +180,24 @@ class LayoutRecognizer():
             lts = Recognizer.sort_Y_firstly(lts, np.mean(
                 [l["bottom"] - l["top"] for l in lts]) / 2)
             lts = Recognizer.layouts_cleanup(bxs, lts)
+            
             page_layout.append(lts)
-
+            
             # Tag layout type, layouts are ready
             def findLayout(ty):
-                nonlocal bxs, lts, self
+                nonlocal bxs, lts, self, pn
                 lts_ = [lt for lt in lts if lt["type"] == ty]
+                
                 i = 0
                 while i < len(bxs):
+                    
                     if bxs[i].get("layout_type"):
                         i += 1
                         continue
                     if __is_garbage(bxs[i]):
                         bxs.pop(i)
                         continue
-
+                    
                     ii = Recognizer.find_overlapped_with_threashold(bxs[i], lts_,
                                                               thr=0.4)
                     if ii is None:  # belong to nothing
@@ -215,9 +225,9 @@ class LayoutRecognizer():
                     i += 1
 
             for lt in ["footer", "header", "reference", "figure caption",
-                       "table caption", "title", "table", "text", "figure", "equation"]:
+                "table caption", "title", "table", "text", "figure", "equation"]:
                 findLayout(lt)
-
+            
             # add box to figure layouts which has not text box
             for i, lt in enumerate(
                     [lt for lt in lts if lt["type"] in ["figure", "equation"]]):
