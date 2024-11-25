@@ -59,6 +59,7 @@ class Pdf(PdfParser):
         self._concat_downward()
         self._filter_forpages()
         callback(0.68, "Text merging finished")
+        print("================= manual ================")
 
         # clean mess
         for b in self.boxes:

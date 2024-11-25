@@ -91,6 +91,7 @@ class Pdf(PdfParser):
         self._text_merge()
         callback(0.67, "Text merging finished")
         tbls = self._extract_table_figure(True, zoomin, True, True)
+        print("================= qa ================")
         #self._naive_vertical_merge()
         # self._concat_downward()
         #self._filter_forpages()

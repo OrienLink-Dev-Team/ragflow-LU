@@ -174,6 +174,11 @@ def build(row):
         cks = chunker.chunk(row["name"], binary=binary, from_page=row["from_page"],
                             to_page=row["to_page"], lang=row["language"], callback=callback,
                             kb_id=row["kb_id"], parser_config=row["parser_config"], tenant_id=row["tenant_id"])
+        # print("================ chunks result ===============")
+        # for ck_i, ck in enumerate(cks):
+        #     print(f"ck_i: {ck_i}, ck: {ck}")
+        # print()
+            
         cron_logger.info(
             "Chunking({}) {}/{}".format(timer() - st, row["location"], row["name"]))
     except Exception as e:
@@ -359,7 +364,15 @@ def main():
                 continue
         else:
             st = timer()
+            print("====================== rows =====================")
+            print(r)
+            print()
+            cron_logger.info(f"{r}")
+            
             cks = build(r)
+            print("================ build result ===============")
+            
+            
             cron_logger.info("Build chunks({}): {}".format(r["name"], timer() - st))
             if cks is None:
                 continue

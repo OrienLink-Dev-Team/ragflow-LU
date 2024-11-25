@@ -30,13 +30,17 @@ export default defineConfig({
   copy: ['src/conf.json'],
   proxy: {
     '/v1': {
-      target: 'http://127.0.0.1:9456/',
+      target: 'http://127.0.0.1:9385/',
       changeOrigin: true,
       ws: true,
       logger: console,
       // pathRewrite: { '^/v1': '/v1' },
     },
   },
+  //https: {
+    //key: 'private.key',
+    //cert: 'hirain.com.crt',
+  //},
   chainWebpack(memo, args) {
     memo.module.rule('markdown').test(/\.md$/).type('asset/source');
 

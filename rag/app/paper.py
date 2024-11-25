@@ -49,6 +49,7 @@ class Pdf(PdfParser):
         self._concat_downward()
         self._filter_forpages()
         callback(0.75, "Text merging finished.")
+        print("================= paper ================")
 
         # clean mess
         if column_width < self.page_images[0].size[0] / zoomin / 2:

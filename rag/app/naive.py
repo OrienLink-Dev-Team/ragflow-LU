@@ -146,8 +146,21 @@ class Pdf(PdfParser):
         # self._naive_vertical_merge()
         self._concat_downward()
         # self._filter_forpages()
-
+        
+        
+        print(f"================= _extract_table_figure result, {len(tbls)} =================")
+        for tbl_i, tbl in enumerate(tbls):
+            print(f"tbl_i: {tbl_i}, tbl: {tbl}")
+        print()
+        
+        print("================= naive result ================")
+        for box_i, box in enumerate(self.boxes):
+            print(f"box_i: {box_i}, box: {box}")
+        print()
+        
         cron_logger.info("layouts: {}".format(timer() - start))
+        
+        
         return [(b["text"], self._line_tag(b, zoomin))
                 for b in self.boxes], tbls
 
@@ -224,6 +237,7 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
         ) if parser_config.get("layout_recognize", True) else PlainParser()
         sections, tbls = pdf_parser(filename if not binary else binary,
                                     from_page=from_page, to_page=to_page, callback=callback)
+        
         res = tokenize_table(tbls, doc, eng)
 
     elif re.search(r"\.xlsx?$", filename, re.IGNORECASE):
@@ -281,6 +295,11 @@ def chunk(filename, binary=None, from_page=0, to_page=100000,
 
     res.extend(tokenize_chunks(chunks, doc, eng, pdf_parser))
     cron_logger.info("naive_merge({}): {}".format(filename, timer() - st))
+    
+    # print("====================== chunk function res ====================")
+    # print(f"res: {res}")
+    # print()
+    
     return res
 
 
