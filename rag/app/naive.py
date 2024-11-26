@@ -148,15 +148,15 @@ class Pdf(PdfParser):
         # self._filter_forpages()
         
         
-        print(f"================= _extract_table_figure result, {len(tbls)} =================")
-        for tbl_i, tbl in enumerate(tbls):
-            print(f"tbl_i: {tbl_i}, tbl: {tbl}")
-        print()
+        # print(f"================= _extract_table_figure result, {len(tbls)} =================")
+        # for tbl_i, tbl in enumerate(tbls):
+        #     print(f"tbl_i: {tbl_i}, tbl: {tbl}")
+        # print()
         
-        print("================= naive result ================")
-        for box_i, box in enumerate(self.boxes):
-            print(f"box_i: {box_i}, box: {box}")
-        print()
+        # print("================= naive result ================")
+        # for box_i, box in enumerate(self.boxes):
+        #     print(f"box_i: {box_i}, box: {box}")
+        # print()
         
         cron_logger.info("layouts: {}".format(timer() - start))
         

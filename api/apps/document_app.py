@@ -16,6 +16,7 @@
 import pathlib
 import re
 
+
 import flask
 from elasticsearch_dsl import Q
 from flask import request
@@ -341,6 +342,7 @@ def rm():
     return get_json_result(data=True)
 
 
+
 @manager.route('/run', methods=['POST'])
 @login_required
 @validate_request("doc_ids", "run")
@@ -356,6 +358,8 @@ def run():
     try:
         for id in req["doc_ids"]:
             info = {"run": str(req["run"]), "progress": 0}
+
+            # TODO: 文件的状态需要新增，目前包括五种状态: UNSTART(0),RUNNING(1),CANCEL(2),DONE(3),FAIL(4)
             if str(req["run"]) == TaskStatus.RUNNING.value:
                 info["progress_msg"] = ""
                 info["chunk_num"] = 0
@@ -365,8 +369,11 @@ def run():
             tenant_id = DocumentService.get_tenant_id(id)
             if not tenant_id:
                 return get_data_error_result(retmsg="Tenant not found!")
+            
+            # TODO: 此处要新增文件的状态，而不是直接将原本数据库中的文件资源清空，保留已经解析完成的资源。
             ELASTICSEARCH.deleteByQuery(
                 Q("match", doc_id=id), idxnm=search.index_name(tenant_id))
+            
 
             if str(req["run"]) == TaskStatus.RUNNING.value:
                 TaskService.filter_delete([Task.doc_id == id])

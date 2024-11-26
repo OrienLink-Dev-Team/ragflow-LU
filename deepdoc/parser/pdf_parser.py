@@ -15,6 +15,14 @@ import sys
 sys.path.append("/root/miniconda3/envs/xinference-test/lib/python3.12/site-packages")
 sys.path.append("/root/miniconda3/envs/tablemaster/lib/python3.12/site-packages")
 
+import ssl
+import urllib3
+
+# 禁用 SSL 验证
+ssl._create_default_https_context = ssl._create_unverified_context
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
 import os
 import random
 import json
@@ -87,11 +95,18 @@ class RAGFlowPdfParser:
             device="cuda"
         )
 
+
+        
+        
+        # Http requests
         from xinference.client import Client     
-        self.vlm_client = Client("https://065f-2409-8a00-263f-a800-3eec-efff-feaf-be1a.ngrok-free.app")
+        # self.vlm_client = Client("https://81695jv23aj7.vicp.fun")
+        self.vlm_client = Client("http://10.5.8.11:9997")
         
         self.vlm_model_name = [name for name, val in self.vlm_client.list_models().items() if "qwen2-vl-instruct" in name]
         self.vlm_model = self.vlm_client.get_model(self.vlm_model_name[0])
+        print("Available models:", self.vlm_model)
+        print("Selected model:", self.vlm_model_name)
         self.vlm_prompt = "描述这幅图，里面的文字和字符都需要按照原文输出，但是需要加上理解和关系描述。中文回答我。"    
 
         """

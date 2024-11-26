@@ -132,7 +132,7 @@ class LayoutRecognizer():
                 os.makedirs(output_dir)
             output_path = f"{output_dir}/output_page_{len(os.listdir(output_dir))}.png"
             page_img.save(output_path)
-            print(f"Page {page_index} Layout Detections:", layout_dets)
+            # print(f"Page {page_index} Layout Detections:", layout_dets)
             print(f"Page {page_index} processed in {time.time() - start_time:.2f} seconds")
             
             layouts.append(filtered_layout_dets)
