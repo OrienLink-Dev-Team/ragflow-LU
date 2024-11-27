@@ -127,6 +127,78 @@ def llm_id2llm_type(llm_id):
                 return llm["model_type"].strip(",")[-1]
 
 
+def self_rag(retr, questions, embd_mdl, tenant_ids, dialog, attachments, rerank_mdl, chat_mdl):
+    count = 1
+    topk = 5
+    question = questions[-1]
+    combined_knowledge = set()
+    combined_doc = set()
+    
+    combined_kbinfos = {"total": 0, "chunks":[], "doc_aggs":[]}
+    while (count < 3):
+        kbinfos = retr.retrieval(question, embd_mdl, tenant_ids, dialog.kb_ids, 1, dialog.top_n,
+                                        dialog.similarity_threshold,
+                                        dialog.vector_similarity_weight,
+                                        doc_ids=attachments,
+                                        top=topk, aggs=False, rerank_mdl=rerank_mdl)
+        for id, ck in enumerate(kbinfos["chunks"]):
+            if id > topk:
+                break
+            if len(ck["content_with_weight"]) > 1:
+                if self_rag_filter_knowledge(chat_mdl, question, [ck["content_with_weight"]]):
+                    print(f"round {count}, chunk {id} accept, content: {ck["content_with_weight"]}")
+                    if ck["content_with_weight"] not in combined_knowledge:
+                        combined_knowledge.add(ck["content_with_weight"])
+                        combined_kbinfos["chunks"].append(ck)
+            else:
+                print(f"round {count}, chunk {id} ")
+        for doc in kbinfos["doc_aggs"]:
+            if doc["doc_id"] not in combined_doc:
+                combined_kbinfos["doc_aggs"].append(doc)
+        print("start rag terminate check")
+        question = self_rag_terminate_check(chat_mdl, question, list(combined_knowledge)) 
+        print(f"round {count}, question is {question}")
+        if question == "yes":
+            break
+        count += 1
+    
+    combined_kbinfos["total"] = len(combined_kbinfos["chunks"])
+    return combined_knowledge, combined_kbinfos
+        
+
+def self_rag_terminate_check(chat_mdl, question:str, contents: list):
+    prompt = """
+    You are a grader assessing whether the content of the provided Documents is sufficient to resolve the Question.
+    It does not need to be a stringent test. The goal is to collect enough information to properly solve the provided Question.
+    If the Documents content is insufficient to resolve the Question, you must output one concise phrase to indicate what additional information you need to resolve the question. Please note that no other words except these keywords/phrases.
+    If the Documents content is sufficient, you must output 'yes' only with no other words.
+"""    
+    if not contents:return "yes"
+    contents = "Documents: \n" + "   - ".join(contents)
+    contents = f"Question: {question}\n" + contents
+    if num_tokens_from_string(contents) >= chat_mdl.max_length - 4:
+        contents = encoder.decode(encoder.encode(contents)[:chat_mdl.max_length - 4])
+    ans = chat_mdl.chat(prompt, [{"role": "user", "content": contents}], {"temperature": 0.01})
+    if ans.lower().find("yes") >= 0: return "yes"
+    return ans
+
+def self_rag_filter_knowledge(chat_mdl, question:str, contents: list):
+    prompt = """
+        You are a grader assessing relevance of a retrieved document to a user question. 
+        It does not need to be a stringent test. The goal is to filter out erroneous retrievals.
+        If the document contains keyword(s) or semantic meaning related to the user question, grade it as relevant. 
+        Give a binary score 'yes' or 'no' score to indicate whether the document is relevant to the question.
+        No other words needed except 'yes' or 'no'.
+    """
+    if not contents:return False
+    contents = "Documents: \n" + "   - ".join(contents)
+    contents = f"Question: {question}\n" + contents
+    if num_tokens_from_string(contents) >= chat_mdl.max_length - 4:
+        contents = encoder.decode(encoder.encode(contents)[:chat_mdl.max_length - 4])
+    ans = chat_mdl.chat(prompt, [{"role": "user", "content": contents}], {"temperature": 0.01})
+    if ans.lower().find("yes") >= 0: return True
+    return False
+
 def chat(dialog, messages, stream=True, **kwargs):
     assert messages[-1]["role"] == "user", "The last content of this conversation is not from user."
     st = timer()
@@ -202,17 +274,22 @@ def chat(dialog, messages, stream=True, **kwargs):
         questions.append(questions[-1])
     if "knowledge" not in [p["key"] for p in prompt_config["parameters"]]:
         kbinfos = {"total": 0, "chunks": [], "doc_aggs": []}
+        knowledges = [ck["content_with_weight"] for ck in kbinfos["chunks"]]
     else:
         if prompt_config.get("keyword", False):
             questions[-1] += keyword_extraction(chat_mdl, questions[-1])
 
         tenant_ids = list(set([kb.tenant_id for kb in kbs]))
-        kbinfos = retr.retrieval(" ".join(questions), embd_mdl, tenant_ids, dialog.kb_ids, 1, dialog.top_n,
-                                        dialog.similarity_threshold,
-                                        dialog.vector_similarity_weight,
-                                        doc_ids=attachments,
-                                        top=dialog.top_k, aggs=False, rerank_mdl=rerank_mdl)
-    knowledges = [ck["content_with_weight"] for ck in kbinfos["chunks"]]
+        if dialog.agentic_rag == "self_rag":
+            knowledges, kbinfos = self_rag(retr,questions,embd_mdl,tenant_ids,dialog,attachments,rerank_mdl,chat_mdl)
+        else:
+            kbinfos = retr.retrieval(" ".join(questions), embd_mdl, tenant_ids, dialog.kb_ids, 1, dialog.top_n,
+                                            dialog.similarity_threshold,
+                                            dialog.vector_similarity_weight,
+                                            doc_ids=attachments,
+                                            top=dialog.top_k, aggs=False, rerank_mdl=rerank_mdl)
+            knowledges = [ck["content_with_weight"] for ck in kbinfos["chunks"]]
+    
     chat_logger.info(
         "{}->{}".format(" ".join(questions), "\n->".join(knowledges)))
     retrieval_tm = timer()

@@ -178,6 +178,169 @@ def set_conversation():
         return server_error_response(e)
 
 
+@manager.route('/completion_agentic_rag', methods=['POST'])
+@validate_request("conversation_id", "messages")
+def completion_agentic_rag():
+    token = request.headers.get('Authorization').split()[1]
+    objs = APIToken.query(token=token)
+    if not objs:
+        return get_json_result(
+            data=False, retmsg='Token is not valid!"', retcode=RetCode.AUTHENTICATION_ERROR)
+    req = request.json
+    e, conv = API4ConversationService.get_by_id(req["conversation_id"])
+    if not e:
+        return get_data_error_result(retmsg="Conversation not found!")
+    if "quote" not in req: req["quote"] = False
+    
+    msg = []
+    for m in req["messages"]:
+        if m["role"] == "system":
+            continue
+        if m["role"] == "assistant" and not msg:
+            continue
+        msg.append(m)
+    if not msg[-1].get("id"): msg[-1]["id"] = get_uuid()
+    message_id = msg[-1]["id"]
+
+    def fillin_conv(ans):
+        nonlocal conv, message_id
+        if not conv.reference:
+            conv.reference.append(ans["reference"])
+        else:
+            conv.reference[-1] = ans["reference"]
+        conv.message[-1] = {"role": "assistant", "content": ans["answer"], "id": message_id}
+        ans["id"] = message_id
+
+    def rename_field(ans):
+        reference = ans['reference']
+        if not isinstance(reference, dict):
+            return
+        for chunk_i in reference.get('chunks', []):
+            if 'docnm_kwd' in chunk_i:
+                chunk_i['doc_name'] = chunk_i['docnm_kwd']
+                chunk_i.pop('docnm_kwd')
+
+    try:
+        if conv.source == "agent":
+            stream = req.get("stream", True)
+            conv.message.append(msg[-1])
+            e, cvs = UserCanvasService.get_by_id(conv.dialog_id)
+            if not e:
+                return server_error_response("canvas not found.")
+            del req["conversation_id"]
+            del req["messages"]
+
+            if not isinstance(cvs.dsl, str):
+                cvs.dsl = json.dumps(cvs.dsl, ensure_ascii=False)
+
+            if not conv.reference:
+                conv.reference = []
+            conv.message.append({"role": "assistant", "content": "", "id": message_id})
+            conv.reference.append({"chunks": [], "doc_aggs": []})
+
+            final_ans = {"reference": [], "content": ""}
+            canvas = Canvas(cvs.dsl, objs[0].tenant_id)
+
+            canvas.messages.append(msg[-1])
+            canvas.add_user_input(msg[-1]["content"])
+            answer = canvas.run(stream=stream)
+
+            assert answer is not None, "Nothing. Is it over?"
+
+            if stream:
+                assert isinstance(answer, partial), "Nothing. Is it over?"
+
+                def sse():
+                    nonlocal answer, cvs, conv
+                    try:
+                        for ans in answer():
+                            for k in ans.keys():
+                                final_ans[k] = ans[k]
+                            ans = {"answer": ans["content"], "reference": ans.get("reference", [])}
+                            fillin_conv(ans)
+                            rename_field(ans)
+                            yield "data:" + json.dumps({"retcode": 0, "retmsg": "", "data": ans},
+                                                       ensure_ascii=False) + "\n\n"
+
+                        canvas.messages.append({"role": "assistant", "content": final_ans["content"], "id": message_id})
+                        if final_ans.get("reference"):
+                            canvas.reference.append(final_ans["reference"])
+                        cvs.dsl = json.loads(str(canvas))
+                        API4ConversationService.append_message(conv.id, conv.to_dict())
+                    except Exception as e:
+                        yield "data:" + json.dumps({"retcode": 500, "retmsg": str(e),
+                                                    "data": {"answer": "**ERROR**: " + str(e), "reference": []}},
+                                                   ensure_ascii=False) + "\n\n"
+                    yield "data:" + json.dumps({"retcode": 0, "retmsg": "", "data": True}, ensure_ascii=False) + "\n\n"
+
+                resp = Response(sse(), mimetype="text/event-stream")
+                resp.headers.add_header("Cache-control", "no-cache")
+                resp.headers.add_header("Connection", "keep-alive")
+                resp.headers.add_header("X-Accel-Buffering", "no")
+                resp.headers.add_header("Content-Type", "text/event-stream; charset=utf-8")
+                return resp
+
+            final_ans["content"] = "\n".join(answer["content"]) if "content" in answer else ""
+            canvas.messages.append({"role": "assistant", "content": final_ans["content"], "id": message_id})
+            if final_ans.get("reference"):
+                canvas.reference.append(final_ans["reference"])
+            cvs.dsl = json.loads(str(canvas))
+
+            result = {"answer": final_ans["content"], "reference": final_ans.get("reference", [])}
+            fillin_conv(result)
+            API4ConversationService.append_message(conv.id, conv.to_dict())
+            rename_field(result)
+            return get_json_result(data=result)
+        
+        #******************For dialog******************
+        conv.message.append(msg[-1])
+        e, dia = DialogService.get_by_id(conv.dialog_id)
+        if not e:
+            return get_data_error_result(retmsg="Dialog not found!")
+        del req["conversation_id"]
+        del req["messages"]
+
+        if not conv.reference:
+            conv.reference = []
+        conv.message.append({"role": "assistant", "content": "", "id": message_id})
+        conv.reference.append({"chunks": [], "doc_aggs": []})
+
+        def stream():
+            nonlocal dia, msg, req, conv
+            try:
+                for ans in chat(dia, msg, True, **req):
+                    fillin_conv(ans)
+                    rename_field(ans)
+                    yield "data:" + json.dumps({"retcode": 0, "retmsg": "", "data": ans},
+                                               ensure_ascii=False) + "\n\n"
+                API4ConversationService.append_message(conv.id, conv.to_dict())
+            except Exception as e:
+                yield "data:" + json.dumps({"retcode": 500, "retmsg": str(e),
+                                            "data": {"answer": "**ERROR**: " + str(e), "reference": []}},
+                                           ensure_ascii=False) + "\n\n"
+            yield "data:" + json.dumps({"retcode": 0, "retmsg": "", "data": True}, ensure_ascii=False) + "\n\n"
+
+        if req.get("stream", True):
+            resp = Response(stream(), mimetype="text/event-stream")
+            resp.headers.add_header("Cache-control", "no-cache")
+            resp.headers.add_header("Connection", "keep-alive")
+            resp.headers.add_header("X-Accel-Buffering", "no")
+            resp.headers.add_header("Content-Type", "text/event-stream; charset=utf-8")
+            return resp
+            
+        answer = None
+        for ans in chat(dia, msg, **req):
+            answer = ans
+            fillin_conv(ans)
+            API4ConversationService.append_message(conv.id, conv.to_dict())
+            break
+        rename_field(answer)
+        return get_json_result(data=answer)
+
+    except Exception as e:
+        return server_error_response(e)
+
+
 @manager.route('/completion', methods=['POST'])
 @validate_request("conversation_id", "messages")
 def completion():
