@@ -5,7 +5,7 @@ import { IReference } from '@/interfaces/database/chat';
 import { IChunk } from '@/interfaces/database/knowledge';
 import classNames from 'classnames';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-
+import Avator from '@/assets/images/avator.png';
 import {
   useFetchDocumentInfosByIds,
   useFetchDocumentThumbnailsByIds,
@@ -109,7 +109,8 @@ const MessageItem = ({
               }
             />
           ) : (
-            <AssistantIcon></AssistantIcon>
+            <img src={Avator} alt="" width={42} height={42} />
+            // <AssistantIcon></AssistantIcon>
           )}
           <Flex vertical gap={8} flex={1}>
             <Space>

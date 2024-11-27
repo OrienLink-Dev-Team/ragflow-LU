@@ -47,7 +47,7 @@ export default {
       nicknamePlaceholder: 'Please input nickname',
       register: 'Create an account',
       continue: 'Continue',
-      title: 'Start building your smart assistants.',
+      title: 'AI-Ignition\nSpark Innovation\nEmpower Knowledge',
       description:
         'Sign up for free to explore top RAG technology. Create knowledge bases and AIs to empower your business.',
       review: 'from 500+ reviews',
@@ -438,6 +438,8 @@ The above is the content you need to summarize.`,
       regenerate: 'Regenerate',
       read: 'Read content',
       tts: 'Text to speech',
+      agentic_rag: 'Agentic Rag',
+      self_rag: 'self_rag',
       ttsTip:
         'To play the voice using voice conversion, please select TTS (speech conversion model) in the settings first.',
       relatedQuestion: 'Related question',

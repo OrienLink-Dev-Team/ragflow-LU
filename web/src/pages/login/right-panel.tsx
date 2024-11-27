@@ -17,10 +17,15 @@ const LoginRightPanel = () => {
         <Title
           level={1}
           className={classNames(styles.white, styles.loginTitle)}
+          style={{
+            'white-space': 'pre',
+            'text-align': 'center',
+            height: 'auto'
+          }}
         >
           {t('title')}
         </Title>
-        <Text className={classNames(styles.pink, styles.loginDescription)}>
+        {/* <Text className={classNames(styles.pink, styles.loginDescription)}>
           {t('description')}
         </Text>
         <Flex align="center" gap={16}>
@@ -38,7 +43,7 @@ const LoginRightPanel = () => {
               {t('review')}
             </span>
           </Flex>
-        </Flex>
+        </Flex> */}
       </Flex>
     </section>
   );

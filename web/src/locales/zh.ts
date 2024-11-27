@@ -425,6 +425,8 @@ export default {
       regenerate: '重新生成',
       read: '朗读内容',
       tts: '文本转语音',
+      agentic_rag: 'Agentic_rag',
+      self_rag: 'self_rag',
       ttsTip: '是否用语音转换播放语音，请先在设置里面选择TTS（语音转换模型）。',
       relatedQuestion: '相关问题',
       answerTitle: '智能回答',

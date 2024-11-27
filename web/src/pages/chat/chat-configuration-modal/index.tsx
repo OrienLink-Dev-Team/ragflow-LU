@@ -134,6 +134,7 @@ const ChatConfigurationModal = ({
         llm_id: initialDialog.llm_id ?? modelId,
         vector_similarity_weight:
           1 - (initialDialog.vector_similarity_weight ?? 0.3),
+        agentic_rag: initialDialog.agentic_rag || ''
       });
     }
   }, [initialDialog, form, visible, modelId]);
