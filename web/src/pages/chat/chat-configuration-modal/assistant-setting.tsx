@@ -1,5 +1,5 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Form, Input, message, Select, Switch, Upload } from 'antd';
+import { Form, Input, message, Select, Switch, Upload, Radio } from 'antd';
 import classNames from 'classnames';
 import { ISegmentedContentProps } from '../interface';
 
@@ -27,6 +27,12 @@ const AssistantSetting = ({ show, form }: ISegmentedContentProps) => {
         Setting >> Model Providers >> System model settings`);
         form.setFieldValue(['prompt_config', 'tts'], false);
       }
+    },
+    [data, form],
+  );
+  const handleChange = useCallback(
+    (checked: boolean) => {
+      console.log(checked, data, form)
     },
     [data, form],
   );
@@ -123,6 +129,14 @@ const AssistantSetting = ({ show, form }: ISegmentedContentProps) => {
         <Switch onChange={handleTtsChange} />
       </Form.Item>
       <KnowledgeBaseItem></KnowledgeBaseItem>
+      <Form.Item
+        label={t('agentic_rag')}
+        name={'agentic_rag'}
+      >
+        <Radio.Group onChange={handleChange}>
+          <Radio value={'self_rag'}>{t('self_rag')}</Radio>
+        </Radio.Group>
+      </Form.Item>
     </section>
   );
 };

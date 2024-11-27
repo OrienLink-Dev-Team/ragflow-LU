@@ -36,6 +36,7 @@ from api.settings import RetCode, retrievaler, kg_retrievaler
 from api.utils.api_utils import get_json_result
 import hashlib
 import re
+import requests
 
 
 @manager.route('/list', methods=['POST'])
@@ -256,6 +257,7 @@ def retrieval_test():
     req = request.json
     page = int(req.get("page", 1))
     size = int(req.get("size", 30))
+    self_rag = req.get("self_rag", False)
     question = req["question"]
     kb_id = req["kb_id"]
     if isinstance(kb_id, str): kb_id = [kb_id]
@@ -297,6 +299,21 @@ def retrieval_test():
         for c in ranks["chunks"]:
             if "vector" in c:
                 del c["vector"]
+        if self_rag:
+            filtered_chunks = []
+            for id, chunk in enumerate(ranks["chunks"]):
+                try:
+                    if id < top:
+                        grade_node_response = grade_node(question, chunk["content_with_weight"])
+                        grade_result_json = extract_json_list(grade_node_response)
+                        if grade_result_json["结果"]:
+                            filtered_chunks.append(ranks["chunks"][id])
+                    else:
+                        break
+                except Exception as e:
+                    print(f"Self-RAG Error: {e}")
+                    continue
+            ranks["chunks"] = filtered_chunks
 
         return get_json_result(data=ranks)
     except Exception as e:
@@ -345,3 +362,67 @@ def knowledge_graph():
 
     return get_json_result(data=obj)
 
+def grade_node(query, chunk_content):
+    system_prompt = f"""
+    以下是问题:
+    {query}
+    以上是问题。
+    以下是信息：
+    {chunk_content}
+    以上是信息。
+    请返回 JSON 对象，包含两个键：结果和原因
+    当信息和问题相关或信息包含问题的内容，将结果的键值设置为 true; 当信息和问题完全无关，将结果的键值设置为 false
+    原因的键值是对应的原因
+    """
+    num_ctx = len(system_prompt) if len(system_prompt) < 8000 else 8000
+    response = completion_generate(
+        model = "qwen2.5:72b",
+        base_url="http://10.5.8.11:11434",
+        prompt=system_prompt,
+        options={
+            "temperature":0.8,
+            "seed":47,
+            "format": "json",
+            "num_ctx": num_ctx
+        }
+    )
+    return response
+
+def extract_json_list(res):
+    try:
+        json_block = res.split("```json")[-1]
+        json_block = json_block.split("```")[0]
+        return json.loads(json_block)
+    except Exception as e:
+        raise RuntimeError(f"Extract error : {e}")
+
+def completion_generate(model:str, base_url:str, prompt:str, stream:bool=False, options: dict = {"temperature": 0.8, "seed": 47}) -> str:
+    json_param = {
+        "model": model,
+        "stream": stream,
+        "prompt": prompt,
+        "options": options,
+    }
+    try:
+        # A100 上 ollama API 是 localhost:11434
+        for i in range(5):
+            response = requests.post(base_url+"/api/generate", json=json_param, stream=stream)
+            if response.status_code == 200:
+
+                if stream:
+                    combine_content = ""
+                    for stream_chunk in response.iter_content(chunk_size=4096):
+                        try:
+                            stream_chunk_json = json.loads(stream_chunk.decode('utf-8'))
+                            print(stream_chunk_json["message"]["content"])
+                            combine_content += stream_chunk_json["message"]["content"]
+                        except Exception as e:
+                            print(f"completion chat stream error: {e}")
+                            continue
+                    return combine_content
+                else:
+                    return json.loads(response.text)["response"]
+            else:
+                continue
+    except Exception as e:
+        raise ConnectionError(f"llm chat error: {e}")

@@ -51,6 +51,7 @@ export interface IDialog {
   update_time: number;
   vector_similarity_weight: number;
   similarity_threshold: number;
+  agentic_rag: string;
 }
 
 export interface IConversation {

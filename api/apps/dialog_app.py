@@ -30,6 +30,7 @@ from api.utils.api_utils import get_json_result
 @login_required
 def set_dialog():
     req = request.json
+    agentic_rag = req.get("agentic_rag","")
     dialog_id = req.get("dialog_id")
     name = req.get("name", "New Dialog")
     description = req.get("description", "A helpful Dialog")
@@ -93,7 +94,8 @@ def set_dialog():
                 "rerank_id": rerank_id,
                 "similarity_threshold": similarity_threshold,
                 "vector_similarity_weight": vector_similarity_weight,
-                "icon": icon
+                "icon": icon,
+                "agentic_rag": agentic_rag
             }
             if not DialogService.save(**dia):
                 return get_data_error_result(retmsg="Fail to new a dialog!")

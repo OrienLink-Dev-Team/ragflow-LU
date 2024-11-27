@@ -438,6 +438,8 @@ The above is the content you need to summarize.`,
       regenerate: 'Regenerate',
       read: 'Read content',
       tts: 'Text to speech',
+      agentic_rag: 'Agentic Rag',
+      self_rag: 'self_rag',
       ttsTip:
         'To play the voice using voice conversion, please select TTS (speech conversion model) in the settings first.',
       relatedQuestion: 'Related question',

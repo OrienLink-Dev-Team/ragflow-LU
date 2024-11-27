@@ -135,6 +135,78 @@ def list_convsersation():
     except Exception as e:
         return server_error_response(e)
 
+@manager.route('/completion_agentic_rag', methods=['POST'])
+@login_required
+@validate_request("conversation_id", "messages")
+def completion_agentic_rag():
+    req = request.json
+    msg = []
+    for m in req["messages"]:
+        if m["role"] == "system":
+            continue
+        if m["role"] == "assistant" and not msg:
+            continue
+        msg.append(m)
+    message_id = msg[-1].get("id")
+    try:
+        e, conv = ConversationService.get_by_id(req["conversation_id"])
+        if not e:
+            return get_data_error_result(retmsg="Conversation not found!")
+        conv.message = deepcopy(req["messages"])
+        e, dia = DialogService.get_by_id(conv.dialog_id)
+        if not e:
+            return get_data_error_result(retmsg="Dialog not found!")
+        del req["conversation_id"]
+        del req["messages"]
+
+        if not conv.reference:
+            conv.reference = []
+        conv.message.append({"role": "assistant", "content": "", "id": message_id})
+        conv.reference.append({"chunks": [], "doc_aggs": []})
+
+        def fillin_conv(ans):
+            nonlocal conv, message_id
+            if not conv.reference:
+                conv.reference.append(ans["reference"])
+            else:
+                conv.reference[-1] = ans["reference"]
+            conv.message[-1] = {"role": "assistant", "content": ans["answer"],
+                                "id": message_id, "prompt": ans.get("prompt", "")}
+            ans["id"] = message_id
+
+        def stream():
+            nonlocal dia, msg, req, conv
+            try:
+                for ans in chat(dia, msg, True, **req):
+                    fillin_conv(ans)
+                    yield "data:" + json.dumps({"retcode": 0, "retmsg": "", "data": ans}, ensure_ascii=False) + "\n\n"
+                ConversationService.update_by_id(conv.id, conv.to_dict())
+            except Exception as e:
+                traceback.print_exc()
+                yield "data:" + json.dumps({"retcode": 500, "retmsg": str(e),
+                                            "data": {"answer": "**ERROR**: " + str(e), "reference": []}},
+                                           ensure_ascii=False) + "\n\n"
+            yield "data:" + json.dumps({"retcode": 0, "retmsg": "", "data": True}, ensure_ascii=False) + "\n\n"
+
+        if req.get("stream", True):
+            resp = Response(stream(), mimetype="text/event-stream")
+            resp.headers.add_header("Cache-control", "no-cache")
+            resp.headers.add_header("Connection", "keep-alive")
+            resp.headers.add_header("X-Accel-Buffering", "no")
+            resp.headers.add_header("Content-Type", "text/event-stream; charset=utf-8")
+            return resp
+
+        else:
+            answer = None
+            for ans in chat(dia, msg, **req):
+                answer = ans
+                fillin_conv(ans)
+                ConversationService.update_by_id(conv.id, conv.to_dict())
+                break
+            return get_json_result(data=answer)
+    except Exception as e:
+        return server_error_response(e)
+
 
 @manager.route('/completion', methods=['POST'])
 @login_required

@@ -44,6 +44,8 @@ from api.db.services.canvas_service import UserCanvasService
 from agent.canvas import Canvas
 from functools import partial
 
+import requests
+
 
 @manager.route('/new_token', methods=['POST'])
 @login_required
@@ -172,6 +174,169 @@ def set_conversation():
             }
             API4ConversationService.save(**conv)
             return get_json_result(data=conv)
+    except Exception as e:
+        return server_error_response(e)
+
+
+@manager.route('/completion_agentic_rag', methods=['POST'])
+@validate_request("conversation_id", "messages")
+def completion_agentic_rag():
+    token = request.headers.get('Authorization').split()[1]
+    objs = APIToken.query(token=token)
+    if not objs:
+        return get_json_result(
+            data=False, retmsg='Token is not valid!"', retcode=RetCode.AUTHENTICATION_ERROR)
+    req = request.json
+    e, conv = API4ConversationService.get_by_id(req["conversation_id"])
+    if not e:
+        return get_data_error_result(retmsg="Conversation not found!")
+    if "quote" not in req: req["quote"] = False
+    
+    msg = []
+    for m in req["messages"]:
+        if m["role"] == "system":
+            continue
+        if m["role"] == "assistant" and not msg:
+            continue
+        msg.append(m)
+    if not msg[-1].get("id"): msg[-1]["id"] = get_uuid()
+    message_id = msg[-1]["id"]
+
+    def fillin_conv(ans):
+        nonlocal conv, message_id
+        if not conv.reference:
+            conv.reference.append(ans["reference"])
+        else:
+            conv.reference[-1] = ans["reference"]
+        conv.message[-1] = {"role": "assistant", "content": ans["answer"], "id": message_id}
+        ans["id"] = message_id
+
+    def rename_field(ans):
+        reference = ans['reference']
+        if not isinstance(reference, dict):
+            return
+        for chunk_i in reference.get('chunks', []):
+            if 'docnm_kwd' in chunk_i:
+                chunk_i['doc_name'] = chunk_i['docnm_kwd']
+                chunk_i.pop('docnm_kwd')
+
+    try:
+        if conv.source == "agent":
+            stream = req.get("stream", True)
+            conv.message.append(msg[-1])
+            e, cvs = UserCanvasService.get_by_id(conv.dialog_id)
+            if not e:
+                return server_error_response("canvas not found.")
+            del req["conversation_id"]
+            del req["messages"]
+
+            if not isinstance(cvs.dsl, str):
+                cvs.dsl = json.dumps(cvs.dsl, ensure_ascii=False)
+
+            if not conv.reference:
+                conv.reference = []
+            conv.message.append({"role": "assistant", "content": "", "id": message_id})
+            conv.reference.append({"chunks": [], "doc_aggs": []})
+
+            final_ans = {"reference": [], "content": ""}
+            canvas = Canvas(cvs.dsl, objs[0].tenant_id)
+
+            canvas.messages.append(msg[-1])
+            canvas.add_user_input(msg[-1]["content"])
+            answer = canvas.run(stream=stream)
+
+            assert answer is not None, "Nothing. Is it over?"
+
+            if stream:
+                assert isinstance(answer, partial), "Nothing. Is it over?"
+
+                def sse():
+                    nonlocal answer, cvs, conv
+                    try:
+                        for ans in answer():
+                            for k in ans.keys():
+                                final_ans[k] = ans[k]
+                            ans = {"answer": ans["content"], "reference": ans.get("reference", [])}
+                            fillin_conv(ans)
+                            rename_field(ans)
+                            yield "data:" + json.dumps({"retcode": 0, "retmsg": "", "data": ans},
+                                                       ensure_ascii=False) + "\n\n"
+
+                        canvas.messages.append({"role": "assistant", "content": final_ans["content"], "id": message_id})
+                        if final_ans.get("reference"):
+                            canvas.reference.append(final_ans["reference"])
+                        cvs.dsl = json.loads(str(canvas))
+                        API4ConversationService.append_message(conv.id, conv.to_dict())
+                    except Exception as e:
+                        yield "data:" + json.dumps({"retcode": 500, "retmsg": str(e),
+                                                    "data": {"answer": "**ERROR**: " + str(e), "reference": []}},
+                                                   ensure_ascii=False) + "\n\n"
+                    yield "data:" + json.dumps({"retcode": 0, "retmsg": "", "data": True}, ensure_ascii=False) + "\n\n"
+
+                resp = Response(sse(), mimetype="text/event-stream")
+                resp.headers.add_header("Cache-control", "no-cache")
+                resp.headers.add_header("Connection", "keep-alive")
+                resp.headers.add_header("X-Accel-Buffering", "no")
+                resp.headers.add_header("Content-Type", "text/event-stream; charset=utf-8")
+                return resp
+
+            final_ans["content"] = "\n".join(answer["content"]) if "content" in answer else ""
+            canvas.messages.append({"role": "assistant", "content": final_ans["content"], "id": message_id})
+            if final_ans.get("reference"):
+                canvas.reference.append(final_ans["reference"])
+            cvs.dsl = json.loads(str(canvas))
+
+            result = {"answer": final_ans["content"], "reference": final_ans.get("reference", [])}
+            fillin_conv(result)
+            API4ConversationService.append_message(conv.id, conv.to_dict())
+            rename_field(result)
+            return get_json_result(data=result)
+        
+        #******************For dialog******************
+        conv.message.append(msg[-1])
+        e, dia = DialogService.get_by_id(conv.dialog_id)
+        if not e:
+            return get_data_error_result(retmsg="Dialog not found!")
+        del req["conversation_id"]
+        del req["messages"]
+
+        if not conv.reference:
+            conv.reference = []
+        conv.message.append({"role": "assistant", "content": "", "id": message_id})
+        conv.reference.append({"chunks": [], "doc_aggs": []})
+
+        def stream():
+            nonlocal dia, msg, req, conv
+            try:
+                for ans in chat(dia, msg, True, **req):
+                    fillin_conv(ans)
+                    rename_field(ans)
+                    yield "data:" + json.dumps({"retcode": 0, "retmsg": "", "data": ans},
+                                               ensure_ascii=False) + "\n\n"
+                API4ConversationService.append_message(conv.id, conv.to_dict())
+            except Exception as e:
+                yield "data:" + json.dumps({"retcode": 500, "retmsg": str(e),
+                                            "data": {"answer": "**ERROR**: " + str(e), "reference": []}},
+                                           ensure_ascii=False) + "\n\n"
+            yield "data:" + json.dumps({"retcode": 0, "retmsg": "", "data": True}, ensure_ascii=False) + "\n\n"
+
+        if req.get("stream", True):
+            resp = Response(stream(), mimetype="text/event-stream")
+            resp.headers.add_header("Cache-control", "no-cache")
+            resp.headers.add_header("Connection", "keep-alive")
+            resp.headers.add_header("X-Accel-Buffering", "no")
+            resp.headers.add_header("Content-Type", "text/event-stream; charset=utf-8")
+            return resp
+            
+        answer = None
+        for ans in chat(dia, msg, **req):
+            answer = ans
+            fillin_conv(ans)
+            API4ConversationService.append_message(conv.id, conv.to_dict())
+            break
+        rename_field(answer)
+        return get_json_result(data=answer)
+
     except Exception as e:
         return server_error_response(e)
 
@@ -811,6 +976,7 @@ def retrieval():
     question = req.get("question")
     page = int(req.get("page", 1))
     size = int(req.get("size", 30))
+    self_rag = req.get("self_rag", False)
     similarity_threshold = float(req.get("similarity_threshold", 0.2))
     vector_similarity_weight = float(req.get("vector_similarity_weight", 0.3))
     top = int(req.get("top_k", 1024))
@@ -837,9 +1003,94 @@ def retrieval():
         for c in ranks["chunks"]:
             if "vector" in c:
                 del c["vector"]
+
+        if self_rag:
+            filtered_chunks = []
+            for id, chunk in enumerate(ranks["chunks"]):
+                try:
+                    if id < top:
+                        grade_node_response = grade_node(question, chunk["content_with_weight"])
+                        grade_result_json = extract_json_list(grade_node_response)
+                        if grade_result_json["结果"]:
+                            filtered_chunks.append(ranks["chunks"][id])
+                    else:
+                        break
+                except RuntimeError as e:
+                    filtered_chunks.append(ranks["chunks"][id])
+                except ConnectionError as e:
+                    filtered_chunks.append(ranks["chunks"][id])
+                except Exception as e:
+                    print(f"Self-RAG Error: {e}")
+                    continue
+            ranks["chunks"] = filtered_chunks
         return get_json_result(data=ranks)
     except Exception as e:
         if str(e).find("not_found") > 0:
             return get_json_result(data=False, retmsg=f'No chunk found! Check the chunk status please!',
                                    retcode=RetCode.DATA_ERROR)
         return server_error_response(e)
+
+def grade_node(query, chunk_content):
+    system_prompt = f"""
+    以下是问题:
+    {query}
+    以上是问题。
+    以下是信息：
+    {chunk_content}
+    以上是信息。
+    请返回 JSON 对象，包含两个键：结果和原因
+    当信息和问题相关或信息包含问题的内容，将结果的键值设置为 true; 当信息和问题完全无关，将结果的键值设置为 false
+    原因的键值是对应的原因
+    """
+    num_ctx = len(system_prompt) if len(system_prompt) < 8000 else 8000
+    response = completion_generate(
+        model = "qwen2.5:72b",
+        base_url="http://10.5.8.11:11434",
+        prompt=system_prompt,
+        options={
+            "temperature":0.8,
+            "seed":47,
+            "format": "json",
+            "num_ctx": num_ctx
+        }
+    )
+    return response
+
+def extract_json_list(res):
+    try:
+        json_block = res.split("```json")[-1]
+        json_block = json_block.split("```")[0]
+        return json.loads(json_block)
+    except Exception as e:
+        raise RuntimeError(f"Extract error : {e}")
+
+def completion_generate(model:str, base_url:str, prompt:str, stream:bool=False, options: dict = {"temperature": 0.8, "seed": 47}) -> str:
+    json_param = {
+        "model": model,
+        "stream": stream,
+        "prompt": prompt,
+        "options": options,
+    }
+    try:
+        # A100 上 ollama API 是 localhost:11434
+        for i in range(5):
+            response = requests.post(base_url+"/api/generate", json=json_param, stream=stream)
+            if response.status_code == 200:
+
+                if stream:
+                    combine_content = ""
+                    for stream_chunk in response.iter_content(chunk_size=4096):
+                        try:
+                            stream_chunk_json = json.loads(stream_chunk.decode('utf-8'))
+                            print(stream_chunk_json["message"]["content"])
+                            combine_content += stream_chunk_json["message"]["content"]
+                        except Exception as e:
+                            print(f"completion chat stream error: {e}")
+                            continue
+                    return combine_content
+                else:
+                    return json.loads(response.text)["response"]
+            else:
+                continue
+    except Exception as e:
+        raise ConnectionError(f"llm chat error: {e}")

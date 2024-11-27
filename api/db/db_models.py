@@ -908,6 +908,13 @@ class Dialog(DataBaseModel):
         default="1",
         index=True)
 
+    agentic_rag = CharField(
+        max_length=128,
+        null=False,
+        default="",
+        help_text="agentic rag type"
+    )
+
     class Meta:
         db_table = "dialog"
 
