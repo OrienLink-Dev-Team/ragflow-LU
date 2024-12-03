@@ -11,10 +11,11 @@ api/flask_session
 
 output/
 mineru/
-*images/
+/images/
+/input_images/
 .venv/
 test*.py
-backend.log
+backend*.log
 web_*/
 
 # Remove Cargo.lock from gitignore if creating an executable, leave it for libraries
