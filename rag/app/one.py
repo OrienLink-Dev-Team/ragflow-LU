@@ -44,6 +44,7 @@ class Pdf(PdfParser):
         callback(0.67, "Text merging finished")
         tbls = self._extract_table_figure(True, zoomin, True, True)
         self._concat_downward()
+        print("================= one ================")
 
         sections = [(b["text"], self.get_position(b, zoomin))
                     for i, b in enumerate(self.boxes)]

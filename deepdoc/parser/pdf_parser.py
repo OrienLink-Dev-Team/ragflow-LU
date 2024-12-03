@@ -10,10 +10,26 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+# coding: iso-8859-1 -*-
+import sys
+sys.path.append("/root/miniconda3/envs/xinference-test/lib/python3.12/site-packages")
+sys.path.append("/root/miniconda3/envs/tablemaster/lib/python3.12/site-packages")
+
+import ssl
+import urllib3
+
+# 禁用 SSL 验证
+ssl._create_default_https_context = ssl._create_unverified_context
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 
 import os
 import random
+import json
+import base64
+import time
 
+from termcolor import colored
 import xgboost as xgb
 from io import BytesIO
 import re
@@ -30,6 +46,7 @@ from deepdoc.vision import OCR, Recognizer, LayoutRecognizer, TableStructureReco
 from rag.nlp import rag_tokenizer
 from copy import deepcopy
 from huggingface_hub import snapshot_download
+from deepdoc.parser.table_master import AtomModelSingleton, AtomicModel
 
 logging.getLogger("pdfminer").setLevel(logging.WARNING)
 
@@ -38,9 +55,11 @@ class RAGFlowPdfParser:
     def __init__(self):
         self.ocr = OCR()
         if hasattr(self, "model_speciess"):
-            self.layouter = LayoutRecognizer("layout." + self.model_speciess)
+            # self.layouter = LayoutRecognizer("layout." + self.f)
+            self.layouter = LayoutRecognizer()
         else:
-            self.layouter = LayoutRecognizer("layout")
+            # self.layouter = LayoutRecognizer("layout")
+            self.layouter = LayoutRecognizer()
         self.tbl_det = TableStructureRecognizer()
 
         self.updown_cnt_mdl = xgb.Booster()
@@ -66,6 +85,30 @@ class RAGFlowPdfParser:
                 model_dir, "updown_concat_xgb.model"))
 
         self.page_from = 0
+        table4_path = '/root/.cache/huggingface/hub/models--opendatalab--PDF-Extract-Kit-1.0/snapshots/38e484355b9acf5654030286bf72490e27842a3c/models/TabRec/TableMaster'
+        table3_path = '/root/.cache/huggingface/hub/models--opendatalab--PDF-Extract-Kit/snapshots/a29caa466f6d07be0e4863bba64204009128931a/models/TabRec/TableMaster'
+        self.table_model = AtomModelSingleton().get_atom_model(
+            atom_model_name=AtomicModel.Table,
+            table_model_type="TableMaster",
+            table_model_path=table3_path,
+            table_max_time=400,
+            device="cuda"
+        )
+
+
+        
+        
+        # Http requests
+        from xinference.client import Client     
+        # self.vlm_client = Client("https://81695jv23aj7.vicp.fun")
+        self.vlm_client = Client("http://10.5.8.11:9997")
+        
+        self.vlm_model_name = [name for name, val in self.vlm_client.list_models().items() if "qwen2-vl-instruct" in name]
+        self.vlm_model = self.vlm_client.get_model(self.vlm_model_name[0])
+        print("Available models:", self.vlm_model)
+        print("Selected model:", self.vlm_model_name)
+        self.vlm_prompt = "描述这幅图，里面的文字和字符都需要按照原文输出，但是需要加上理解和关系描述。中文回答我。"    
+
         """
         If you have trouble downloading HuggingFace models, -_^ this might help!!
 
@@ -188,6 +231,11 @@ class RAGFlowPdfParser:
 
     def _table_transformer_job(self, ZM):
         logging.info("Table processing...")
+        print(f"================= _table_transformer_job begin, {len(self.boxes)} =================")
+        # for box_i, box in enumerate(self.boxes):
+        #     print(f"box_i: {box_i}, box: {box}")
+        # print()
+        return
         imgs, pos = [], []
         tbcnt = [0]
         MARGIN = 10
@@ -213,7 +261,43 @@ class RAGFlowPdfParser:
             return
         recos = self.tbl_det(imgs)
         tbcnt = np.cumsum(tbcnt)
+        
+        print(f"tbcnt: {tbcnt}")
+        
+        
+        # output_dir = f"/mnt/mydisk/zhanzhao.liang/AImodel/ragflow/output"
+        # pdf_name = "JMC_1_QiBiao__JMC EEA2.0网络架构平台江铃汽车股份有限公司CAN通信需求规范3.0"
+        # output_table_det_dir = f"{output_dir}/{pdf_name}/table_det_result"
+        # os.makedirs(output_table_det_dir, exist_ok=True)
+        # label_colors = {
+        #     "table": "red",
+        #     "table column": "blue",
+        #     "table row": "green",
+        #     "table column header": "yellow",
+        #     "table projected row header": "purple",
+        #     "table spanning cell": "orange",
+        # }
+        # print(len(self.page_images), len(recos))
+        # for page_num, components in enumerate(recos):
+        #     img = self.page_images[page_num].copy()  # 复制当前页的图像
+        #     print(f"page_num: {page_num}, img.size: {img.size}")
+        #     draw = ImageDraw.Draw(img)
+
+        #     for component in components:
+        #         print(f"page_num: {page_num}, component: {component}")
+        #         label = component["label"]
+        #         color = label_colors.get(label, "black")  # 默认颜色为黑色
+        #         left, right, top, bottom = component["x0"], component["x1"], component["top"], component["bottom"]
+        #         draw.rectangle([left, top, right, bottom], outline=color, width=3)
+
+        #     # 保存绘制后的图像
+        #     img_filepath = os.path.join(output_table_det_dir, f"page_{page_num+self.page_from}_tables_annotated.jpg")
+        #     img.save(img_filepath)
+        
         for i in range(len(tbcnt) - 1):  # for page
+            # img = self.page_images[i].copy()
+            # draw = ImageDraw.Draw(img)
+            
             pg = []
             for j, tb_items in enumerate(
                     recos[tbcnt[i]: tbcnt[i + 1]]):  # for table
@@ -223,6 +307,14 @@ class RAGFlowPdfParser:
                     it["x1"] = (it["x1"] + poss[j][0])
                     it["top"] = (it["top"] + poss[j][1])
                     it["bottom"] = (it["bottom"] + poss[j][1])
+                    
+                    # print(f"it_x0: {it['x0']}, it_x1: {it['x1']}, it_top: {it['top']}, it_bottom: {it['bottom']}")
+                    # label = it.get("label", "default")
+                    # color = label_colors.get(label, "black")
+                    # left, right, top, bottom = it["x0"], it["x1"], it["top"], it["bottom"]
+                    # draw.rectangle([left, top, right, bottom], outline=color, width=3)
+                    
+                    
                     for n in ["x0", "x1", "top", "bottom"]:
                         it[n] /= ZM
                     it["top"] += self.page_cum_height[i]
@@ -231,6 +323,10 @@ class RAGFlowPdfParser:
                     it["layoutno"] = j
                     pg.append(it)
             self.tb_cpns.extend(pg)
+            
+            # img_filepath = os.path.join(output_table_det_dir, f"page_{i+self.page_from}_tables_annotated.jpg")
+            # img.save(img_filepath)
+        
 
         def gather(kwd, fzy=10, ption=0.6):
             eles = Recognizer.sort_Y_firstly(
@@ -276,9 +372,23 @@ class RAGFlowPdfParser:
                 b["H_left"] = spans[ii]["x0"]
                 b["H_right"] = spans[ii]["x1"]
                 b["SP"] = ii
+        
+        print(f"================= _table_transformer_job result, {len(self.boxes)} =================")
+
+
 
     def __ocr(self, pagenum, img, chars, ZM=3):
+            
+        print(colored(f"=================== page {pagenum} =====================",'yellow'))
+        # output_dir = f"/mnt/mydisk/zhanzhao.liang/AImodel/ragflow/output"
+        # pdf_name = "JMC_1_QiBiao__JMC EEA2.0网络架构平台江铃汽车股份有限公司CAN通信需求规范3.0"
+        # output_ocr_dir = f"{output_dir}/{pdf_name}/ocr_result"
+        # os.makedirs(output_ocr_dir, exist_ok=True)
+        # json_filename = f"{output_dir}/cropped_image.json"
+        
+        
         bxs = self.ocr.detect(np.array(img))
+        
         if not bxs:
             self.boxes.append([])
             return
@@ -290,6 +400,7 @@ class RAGFlowPdfParser:
               "page_number": pagenum} for b, t in bxs if b[0][0] <= b[1][0] and b[0][1] <= b[-1][1]],
             self.mean_height[-1] / 3
         )
+        
         
         # merge chars in the same rect
         for c in Recognizer.sort_Y_firstly(
@@ -308,16 +419,59 @@ class RAGFlowPdfParser:
                     bxs[ii]["text"] += " "
             else:
                 bxs[ii]["text"] += c["text"]
-
-        for b in bxs:
+        
+        # print(colored(f"merge chars bxs output: {len(bxs)}",'green'))
+        # print(bxs, end='\n\n')
+        
+        for b_index, b in enumerate(bxs):
+            # print(f"b_index: {b_index}, b: {b}")
             if not b["text"]:
                 left, right, top, bott = b["x0"] * ZM, b["x1"] * \
                                          ZM, b["top"] * ZM, b["bottom"] * ZM
+                      
+                # print(type(img))
+                # print(left, right, top, bott)
+                # bbox_img = img.crop((left, top, right, bott))
+                # img_filename = f"page_{pagenum}_bbox_{b_index}.jpg"
+                # img_filepath = os.path.join(output_ocr_dir, img_filename)
+                # bbox_img.save(img_filepath)
+                
                 b["text"] = self.ocr.recognize(np.array(img),
                                                np.array([[left, top], [right, top], [right, bott], [left, bott]],
                                                         dtype=np.float32))
+                # print(f"after recognize, b_index: {b_index}, b: {b}")
+                
+                # with open(json_filename, "a", encoding="utf-8") as f:
+                #     json.dump({
+                #         "image_path": img_filepath,
+                #         "text": b["text"],
+                #         "page_num": pagenum
+                #     }, f, ensure_ascii=False)
+                #     f.write("\n")
+                
             del b["txt"]
+                
         bxs = [b for b in bxs if b["text"]]
+        
+        
+        # draw = ImageDraw.Draw(img)
+        # for b in bxs:
+        #     left, right, top, bott = b["x0"] * ZM, b["x1"] * ZM, b["top"] * ZM, b["bottom"] * ZM
+        #     draw.rectangle([left, top, right, bott], outline="red", width=3)
+        # # 保存绘制后的图像
+        # img_filepath = os.path.join(output_ocr_dir, f"page_{pagenum+self.page_from}_text_annotated.jpg")
+        # img.save(img_filepath)
+        # # 将文本按顺序保存到 JSON 文件中
+        # texts = [b["text"] for b in bxs]
+        # json_filename = os.path.join(output_ocr_dir, f"text.json")
+        # with open(json_filename, "a", encoding="utf-8") as f:
+        #     json.dump({"page_num": pagenum+self.page_from, "texts": texts}, f, ensure_ascii=False, indent=4)
+        #     f.write("\n")
+        
+        
+        print(f"================= ocr final output, {len(bxs)} =================")
+        
+        
         if self.mean_height[-1] == 0:
             self.mean_height[-1] = np.median([b["bottom"] - b["top"]
                                               for b in bxs])
@@ -326,7 +480,14 @@ class RAGFlowPdfParser:
     def _layouts_rec(self, ZM, drop=True):
         assert len(self.page_images) == len(self.boxes)
         self.boxes, self.page_layout = self.layouter(
-            self.page_images, self.boxes, ZM, drop=drop)
+            self.page_images, self.boxes, ZM, thr=0.5, drop=drop)
+        
+        print(f"================= _layouts_rec result, {len(self.page_layout)} =================")
+        
+        # for page_i, layout in enumerate(self.page_layout):
+        #     print(f"page_i: {page_i}, layout: {layout}")
+        # print()
+            
         # cumlative Y
         for i in range(len(self.boxes)):
             self.boxes[i]["top"] += \
@@ -335,17 +496,11 @@ class RAGFlowPdfParser:
                 self.page_cum_height[self.boxes[i]["page_number"] - 1]
 
     def _text_merge(self):
+        print(f"================= _text_merge begin, {len(self.boxes)} =================")
+        
+
         # merge adjusted boxes
         bxs = self.boxes
-
-        def end_with(b, txt):
-            txt = txt.strip()
-            tt = b.get("text", "").strip()
-            return tt and tt.find(txt) == len(tt) - len(txt)
-
-        def start_with(b, txts):
-            tt = b.get("text", "").strip()
-            return tt and any([tt.find(t.strip()) == 0 for t in txts])
 
         # horizontally merge adjacent box with the same layout
         i = 0
@@ -368,29 +523,15 @@ class RAGFlowPdfParser:
             i += 1
             continue
 
-            dis_thr = 1
-            dis = b["x1"] - b_["x0"]
-            if b.get("layout_type", "") != "text" or b_.get(
-                    "layout_type", "") != "text":
-                if end_with(b, "，") or start_with(b_, "（，"):
-                    dis_thr = -8
-                else:
-                    i += 1
-                    continue
-
-            if abs(self._y_dis(b, b_)) < self.mean_height[bxs[i]["page_number"] - 1] / 5 \
-                    and dis >= dis_thr and b["x1"] < b_["x1"]:
-                # merge
-                bxs[i]["x1"] = b_["x1"]
-                bxs[i]["top"] = (b["top"] + b_["top"]) / 2
-                bxs[i]["bottom"] = (b["bottom"] + b_["bottom"]) / 2
-                bxs[i]["text"] += b_["text"]
-                bxs.pop(i + 1)
-                continue
-            i += 1
         self.boxes = bxs
+        
+        print(f"================= _text_merge result, {len(self.boxes)} =================")
+    
 
     def _naive_vertical_merge(self):
+        print(f"================= _naive_vertical_merge begin, {len(self.boxes)} =================")
+        
+        
         bxs = Recognizer.sort_Y_firstly(
             self.boxes, np.median(
                 self.mean_height) / 3)
@@ -440,8 +581,13 @@ class RAGFlowPdfParser:
             b["x1"] = max(b["x1"], b_["x1"])
             bxs.pop(i + 1)
         self.boxes = bxs
+        
+        print(f"================= _naive_vertical_merge result, {len(self.boxes)} =================")
+        
 
     def _concat_downward(self, concat_between_pages=True):
+        print(f"================= _concat_downward begin, {len(self.boxes)} =================")
+        
         # count boxes in the same row as a feature
         for i in range(len(self.boxes)):
             mh = self.mean_height[self.boxes[i]["page_number"] - 1]
@@ -549,8 +695,42 @@ class RAGFlowPdfParser:
             boxes.append(t)
 
         self.boxes = Recognizer.sort_Y_firstly(boxes, 0)
+        
+        # output_dir = f"/mnt/mydisk/zhanzhao.liang/AImodel/ragflow/output"
+        # pdf_name = "JMC_1_QiBiao__JMC EEA2.0网络架构平台江铃汽车股份有限公司CAN通信需求规范3.0"
+        # output_text_dir = f"{output_dir}/{pdf_name}/text_result"
+        # os.makedirs(output_text_dir, exist_ok=True)
+        # print(f"================= _concat_downward result, {len(self.boxes)} =================")
+        
+        # json_filename = os.path.join(output_text_dir, "boxes_text.json")
+        # for box in self.boxes:
+        #     with open(json_filename, "a", encoding="utf-8") as f:
+        #         json.dump({"page_number": box["page_number"] + self.page_from, "text": box["text"]}, f, ensure_ascii=False)
+        #         f.write("\n")
+                
+        # for page_num, img in enumerate(self.page_images):
+        #     img_copy = img.copy()
+        #     draw = ImageDraw.Draw(img_copy)
+        #     print(f"page:{page_num}, page_cum_height: {self.page_cum_height[page_num]}")
+        #     for box_i, box in enumerate(self.boxes):
+        #         if box["page_number"] == page_num:
+        #             print(f"box_i: {box_i}, box: {box}")
+        #             box_new = deepcopy(box)
+        #             left, right, top, bottom = box_new["x0"], box_new["x1"], box_new["top"], box_new["bottom"]
+        #             top -= self.page_cum_height[page_num]
+        #             bottom -= self.page_cum_height[page_num]
+        #             print(f"box_new: {left}, {right}, {top}, {bottom}")
+        #             left, right, top, bottom = left * 3, right * 3, top * 3, bottom * 3
+        #             print(f"img_copy.size: {img_copy.size}")
+        #             draw.rectangle([left, top, right, bottom], outline="red", width=3)
+
+        #     img_filepath = os.path.join(output_text_dir, f"page_{page_num + self.page_from}_text_annotated.jpg")
+        #     img_copy.save(img_filepath)
+        
 
     def _filter_forpages(self):
+        print(f"================= _filter_forpages begin, {len(self.boxes)} =================")
+
         if not self.boxes:
             return
         findit = False
@@ -600,8 +780,14 @@ class RAGFlowPdfParser:
                 self.boxes.pop(i)
                 continue
             i += 1
+        
+        print(f"================= _filter_forpages result, {len(self.boxes)} =================")
+ 
+
 
     def _merge_with_same_bullet(self):
+        print(f"================= _merge_with_same_bullet begin, {len(self.boxes)} =================")
+
         i = 0
         while i + 1 < len(self.boxes):
             b = self.boxes[i]
@@ -624,9 +810,14 @@ class RAGFlowPdfParser:
             b_["x1"] = max(b["x1"], b_["x1"])
             b_["top"] = b["top"]
             self.boxes.pop(i)
+        
+        print(f"================= _merge_with_same_bullet result, {len(self.boxes)} =================")
 
     def _extract_table_figure(self, need_image, ZM,
                               return_html, need_position):
+        
+        print(f"================= _extract_table_figure begin, {len(self.boxes)} =================")
+
         tables = {}
         figures = {}
         # extract figure and table boxes
@@ -639,10 +830,14 @@ class RAGFlowPdfParser:
                 continue
             lout_no = str(self.boxes[i]["page_number"]) + \
                       "-" + str(self.boxes[i]["layoutno"])
-            if TableStructureRecognizer.is_caption(self.boxes[i]) or self.boxes[i]["layout_type"] in ["table caption",
-                                                                                                      "title",
-                                                                                                      "figure caption",
-                                                                                                      "reference"]:
+            
+            # if TableStructureRecognizer.is_caption(self.boxes[i]):
+            #     print(f'table structure recognizer: self.boxes[i]: {self.boxes[i]}')
+
+            if self.boxes[i]["layout_type"] in ["table caption",
+                                                "title",
+                                                "figure caption",
+                                                "reference"]:
                 nomerge_lout_no.append(lst_lout_no)
             if self.boxes[i]["layout_type"] == "table":
                 if re.match(r"(数据|资料|图表)*来源[:： ]", self.boxes[i]["text"]):
@@ -699,12 +894,11 @@ class RAGFlowPdfParser:
             if not TableStructureRecognizer.is_caption(c):
                 i += 1
                 continue
-
-            # find the nearest layouts
             def nearest(tbls):
                 nonlocal c
                 mink = ""
                 minv = 1000000000
+
                 for k, bxs in tbls.items():
                     for b in bxs:
                         if b.get("layout_type", "").find("caption") >= 0:
@@ -713,6 +907,7 @@ class RAGFlowPdfParser:
                         x_dis = self._x_dis(
                             c, b) if not x_overlapped(
                             c, b) else 0
+
                         dis = y_dis * y_dis + x_dis * x_dis
                         if dis < minv:
                             mink = k
@@ -721,17 +916,15 @@ class RAGFlowPdfParser:
 
             tk, tv = nearest(tables)
             fk, fv = nearest(figures)
-            # if min(tv, fv) > 2000:
-            #    i += 1
-            #    continue
-            if tv < fv and tk:
+
+            if tv < fv and tk and c.get("layout_type", "") == "table caption":
                 tables[tk].insert(0, c)
                 logging.debug(
                     "TABLE:" +
                     self.boxes[i]["text"] +
                     "; Cap: " +
                     tk)
-            elif fk:
+            elif fk and c.get("layout_type", "") == "figure caption":
                 figures[fk].insert(0, c)
                 logging.debug(
                     "FIGURE:" +
@@ -790,30 +983,107 @@ class RAGFlowPdfParser:
             return pic
 
         # crop figure out and add caption
-        for k, bxs in figures.items():
-            txt = "\n".join([b["text"] for b in bxs])
-            if not txt:
-                continue
+        # output_dir = f"/mnt/mydisk/zhanzhao.liang/AImodel/ragflow/output"
+        # pdf_name = "JMC_1_QiBiao__JMC EEA2.0网络架构平台江铃汽车股份有限公司CAN通信需求规范3.0"
+        # output_image_dir = f"{output_dir}/{pdf_name}/image_result"
+        # os.makedirs(output_image_dir, exist_ok=True)
+        
+        print("================= xinference VLM =================") 
 
+        print(self.vlm_client.list_models())
+        
+        
+        # count = 0
+        print(f"================= figure caption=================")
+        for k, bxs in figures.items():
+            if not bxs:
+                continue
+            txt = bxs[0]["text"]
             poss = []
+            cropped_img = cropout(bxs, "figure", poss)
+            
+            print("================= vlm_model =================")
+            print(self.vlm_model)
+            start_time = time.time()
+            cropped_img_copy = cropped_img.copy()
+            buffered = BytesIO()
+            cropped_img_copy.save(buffered, format="JPEG")
+            buffered.seek(0)
+            b64_img = base64.b64encode(buffered.read()).decode('utf-8')
+            vlm_output = self.vlm_model.chat(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                        {"type": "text", "text": self.vlm_prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                # "url": f"{cropped_dir}/{filename}",
+                                "url": f"data:image/jpeg;base64,{b64_img}",
+                            },
+                        },
+                        ],
+                    }
+                ],
+                generate_config={"max_tokens": 1024}
+            )
+            print(f"vlm duration: {time.time() - start_time}")
+            print(vlm_output['choices'][0]['message']['content'], end="\n\n")
+            txt += "\n" + vlm_output['choices'][0]['message']['content']
+            
+            
             res.append(
-                (cropout(
-                    bxs,
-                    "figure", poss),
+                (cropped_img,
                  [txt]))
             positions.append(poss)
-
+            
+            # pagenum = bxs[0]["page_number"]
+            # img_filepath = os.path.join(output_image_dir, f"page_{pagenum+self.page_from}_figure_{count}.jpg")
+            # cropped_img.save(img_filepath)
+            # count += 1
+            # print(f"{count}, figure_txt: {txt}")
+            # json_filename = os.path.join(output_image_dir, f"figure.json")
+            # with open(json_filename, "a", encoding="utf-8") as f:
+            #     json.dump({"page_num": pagenum+self.page_from, "texts": txt}, f, ensure_ascii=False, indent=4)
+            #     f.write("\n")
+            
+        
+        # output_table_crop_dir = f"{output_dir}/{pdf_name}/table_result"
+        # os.makedirs(output_table_crop_dir, exist_ok=True)
+        # count = 0
+        
         for k, bxs in tables.items():
             if not bxs:
                 continue
             bxs = Recognizer.sort_Y_firstly(bxs, np.mean(
                 [(b["bottom"] - b["top"]) / 2 for b in bxs]))
             poss = []
-            res.append((cropout(bxs, "table", poss),
-                        self.tbl_det.construct_table(bxs, html=return_html, is_english=self.is_english)))
+            images = cropout(bxs, "table", poss)
+            table_captions = [b['text'] for b in bxs if b['layout_type'] == 'table caption']
+            html_res = self.table_model.img2html(images)
+            if table_captions:
+                html_res = re.sub(r'(<table>)', r'\1<caption>{}</caption>'.format(''.join(table_captions)), html_res)
+            # 替换html_res中的单元格内容
+            html_res = re.sub(r'(<td>(二|一)</td>)', r'<td>-</td>', html_res)
+            res.append((images,[html_res]))
             positions.append(poss)
+            
+            # pagenum = bxs[0]["page_number"]
+            # img_filepath = os.path.join(output_table_crop_dir, f"page_{pagenum+self.page_from}_table_{count}.jpg")
+            # cropped_img.save(img_filepath)
+            # count += 1
+            # print(f"{count}, table_txt: {txt}")
+            # json_filename = os.path.join(output_table_crop_dir, f"table.json")
+            # with open(json_filename, "a", encoding="utf-8") as f:
+            #     json.dump({"page_num": pagenum+self.page_from, "texts": txt}, f, ensure_ascii=False, indent=4)
+            #     f.write("\n")
 
+        print(f"================= _extract_table_figure result, {len(res)} =================")
         assert len(positions) == len(res)
+
+        import gc
+        gc.collect()
 
         if need_position:
             return list(zip(res, positions))
@@ -860,6 +1130,10 @@ class RAGFlowPdfParser:
                     bx["x0"], bx["x1"], top, bott)
 
     def __filterout_scraps(self, boxes, ZM):
+        print(f"================= __filterout_scraps begin, {len(boxes)} =================")
+        # for box_i, box in enumerate(boxes):
+        #     print(f"box_i: {box_i}, box: {box}")
+        # print()
 
         def width(b):
             return b["x1"] - b["x0"]
@@ -930,6 +1204,11 @@ class RAGFlowPdfParser:
                 logging.debug("REMOVED: " +
                               "<<".join([c["text"] for c in lines]))
 
+        print(f"================= __filterout_scraps result, {len(boxes)} =================")
+        # for box_i, box in enumerate(boxes):
+        #     print(f"box_i: {box_i}, box: {box}")
+        # print()
+        
         return "\n\n".join(res)
 
     @staticmethod
@@ -1021,7 +1300,7 @@ class RAGFlowPdfParser:
                 [c for c in self.page_chars]) and self.boxes:
             bxes = [b for bxs in self.boxes for b in bxs]
             self.is_english = re.search(r"[\na-zA-Z0-9,/¸;:'\[\]\(\)!@#$%^&*\"?<>._-]{30,}",
-                                        "".join([b["text"] for b in random.choices(bxes, k=min(30, len(bxes)))]))
+                                         "".join([b["text"] for b in random.choices(bxes, k=min(30, len(bxes)))]))
 
         logging.info("Is it English:", self.is_english)
 

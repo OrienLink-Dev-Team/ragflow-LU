@@ -174,6 +174,11 @@ def build(row):
         cks = chunker.chunk(row["name"], binary=binary, from_page=row["from_page"],
                             to_page=row["to_page"], lang=row["language"], callback=callback,
                             kb_id=row["kb_id"], parser_config=row["parser_config"], tenant_id=row["tenant_id"])
+        # print("================ chunks result ===============")
+        # for ck_i, ck in enumerate(cks):
+        #     print(f"ck_i: {ck_i}, ck: {ck}")
+        # print()
+            
         cron_logger.info(
             "Chunking({}) {}/{}".format(timer() - st, row["location"], row["name"]))
     except Exception as e:
@@ -222,19 +227,44 @@ def build(row):
         docs.append(d)
     cron_logger.info("MINIO PUT({}):{}".format(row["name"], el))
 
+    max_keywords_time = 0
     if row["parser_config"].get("auto_keywords", 0):
         callback(msg="Start to generate keywords for every chunk ...")
+        
+        print(f"Start to generate keywords for every chunk ..., num: {len(docs)}")
+        start_time = time.time()
         chat_mdl = LLMBundle(row["tenant_id"], LLMType.CHAT, llm_name=row["llm_id"], lang=row["language"])
-        for d in docs:
+        print(f"chat_mdl init time: {time.time() - start_time}s")
+        
+        for d_index, d in enumerate(docs):
+            start_time = time.time()
             d["important_kwd"] = keyword_extraction(chat_mdl, d["content_with_weight"],
                                                     row["parser_config"]["auto_keywords"]).split(",")
+            keyword_time = time.time() - start_time
+            max_keywords_time = max(max_keywords_time, keyword_time)
+            print(f"d_index: {d_index}, keyword_extraction time: {keyword_time}s, max_keywords_time: {max_keywords_time}s")
+            
+            start_time = time.time()
             d["important_tks"] = rag_tokenizer.tokenize(" ".join(d["important_kwd"]))
 
+    max_questions_time = 0
     if row["parser_config"].get("auto_questions", 0):
         callback(msg="Start to generate questions for every chunk ...")
+        
+        print(f"Start to generate questions for every chunk ..., num: {len(docs)}")
+        start_time = time.time()
         chat_mdl = LLMBundle(row["tenant_id"], LLMType.CHAT, llm_name=row["llm_id"], lang=row["language"])
-        for d in docs:
+        print(f"chat_mdl init time: {time.time() - start_time}s")
+        
+        for d_index, d in enumerate(docs):
+            
+            start_time = time.time()
             qst = question_proposal(chat_mdl, d["content_with_weight"], row["parser_config"]["auto_questions"])
+            question_time = time.time() - start_time
+            max_questions_time = max(max_questions_time, question_time)
+            print(f"d_index: {d_index}, question_generating time: {question_time}s, max_questions_time: {max_questions_time}s")
+            
+            start_time = time.time()
             d["content_with_weight"] = f"Question: \n{qst}\n\nAnswer:\n" + d["content_with_weight"]
             qst = rag_tokenizer.tokenize(qst)
             if "content_ltks" in d:
@@ -256,7 +286,7 @@ def init_kb(row):
 def embedding(docs, mdl, parser_config=None, callback=None):
     if parser_config is None:
         parser_config = {}
-    batch_size = 32
+    batch_size = 4
     tts, cnts = [rmSpace(d["title_tks"]) for d in docs if d.get("title_tks")], [
         re.sub(r"</?(table|td|caption|tr|th)( [^<>]{0,12})?>", " ", d["content_with_weight"]) for d in docs]
     tk_count = 0
@@ -340,6 +370,7 @@ def main():
     if len(rows) == 0:
         return
 
+    # TODO: 这里设计文件解析需要加一个字段，记录报错页的信息，定义一个bool值，当页码解析流程结束为True，失败为False，使得重新解析时只针对错误的页码进行解析。
     for _, r in rows.iterrows():
         callback = partial(set_progress, r["id"], r["from_page"], r["to_page"])
         try:
@@ -359,7 +390,17 @@ def main():
                 continue
         else:
             st = timer()
+            print("====================== rows =====================")
+            print(r)
+            print()
+            
             cks = build(r)
+            # print("================ build result ===============")
+            # for ck_i, ck in enumerate(cks):
+            #     print(f"ck_i: {ck_i}, ck: {ck}")
+            # print()
+            
+            
             cron_logger.info("Build chunks({}): {}".format(r["name"], timer() - st))
             if cks is None:
                 continue
