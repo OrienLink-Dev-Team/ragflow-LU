@@ -39,10 +39,12 @@ from api.utils.api_utils import server_error_response, get_data_error_result, ge
 
 from api.utils.file_utils import filename_type, thumbnail
 from rag.utils.storage_factory import STORAGE_IMPL
+from rag.nlp import search
 
 from api.db.services.canvas_service import UserCanvasService
 from agent.canvas import Canvas
 from functools import partial
+from rag.utils import rmSpace
 
 import requests
 
@@ -669,6 +671,67 @@ def upload_parse():
     doc_ids = doc_upload_and_parse(request.form.get("conversation_id"), file_objs, objs[0].tenant_id)
     return get_json_result(data=doc_ids)
 
+@manager.route('/list_ordered_chunks', methods=['POST'])
+def list_ordered_chunks():
+    token = request.headers.get('Authorization').split()[1]
+    objs = APIToken.query(token=token)
+    if not objs:
+        return get_json_result(
+            data=False, retmsg='Token is not valid!"', retcode=RetCode.AUTHENTICATION_ERROR)
+
+    req = request.json
+    try:
+        if "doc_name" in req.keys():
+            tenant_id = DocumentService.get_tenant_id_by_name(req['doc_name'])
+            doc_id = DocumentService.get_doc_id_by_doc_name(req['doc_name'])
+
+        elif "doc_id" in req.keys():
+            tenant_id = DocumentService.get_tenant_id(req['doc_id'])
+            doc_id = req['doc_id']
+        else:
+            return get_json_result(
+                data=False, retmsg="Can't find doc_name or doc_id"
+            )
+        
+        tenant_id = DocumentService.get_tenant_id(req["doc_id"])
+        if not tenant_id:
+            return get_data_error_result(retmsg="Tenant not found!")
+        e, doc = DocumentService.get_by_id(doc_id)
+        if not e:
+            return get_data_error_result(retmsg="Document not found!")
+        query = {
+            "doc_ids": [doc_id],"sort": True
+        }
+        if "available_int" in req:
+            query["available_int"] = int(req["available_int"])
+        sres = retrievaler.search(query, search.index_name(tenant_id), highlight=True)
+        res = {"total": sres.total, "chunks": [], "doc": doc.to_dict()}
+        for id in sres.ids:
+            d = {
+                "chunk_id": id,
+                "content_with_weight": rmSpace(sres.highlight[id]) if id in sres.highlight else sres.field[
+                    id].get(
+                    "content_with_weight", ""),
+                "doc_id": sres.field[id]["doc_id"],
+                "docnm_kwd": sres.field[id]["docnm_kwd"],
+                "important_kwd": sres.field[id].get("important_kwd", []),
+                "img_id": sres.field[id].get("img_id", ""),
+                "available_int": sres.field[id].get("available_int", 1),
+                "positions": sres.field[id].get("position_int", "").split("\t")
+            }
+            if len(d["positions"]) % 5 == 0:
+                poss = []
+                for i in range(0, len(d["positions"]), 5):
+                    poss.append([float(d["positions"][i]), float(d["positions"][i + 1]), float(d["positions"][i + 2]),
+                                 float(d["positions"][i + 3]), float(d["positions"][i + 4])])
+                d["positions"] = poss
+            res["chunks"].append(d)
+        return get_json_result(data=res)
+    except Exception as e:
+        if str(e).find("not_found") > 0:
+            return get_json_result(data=False, retmsg=f'No chunk found!',
+                                   retcode=RetCode.DATA_ERROR)
+        return server_error_response(e)
 
 @manager.route('/list_chunks', methods=['POST'])
 # @login_required
